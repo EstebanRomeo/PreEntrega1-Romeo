@@ -1,35 +1,45 @@
 const express = require('express');
+const exphbs = require('express-handlebars');
+const http = require('http');
+const socketIO = require('socket.io');
 const bodyParser = require('body-parser');
 
 const app = express();
+const server = http.createServer(app);
+const io = socketIO(server);
+
 const PORT = 8080;
 
 
+app.engine('handlebars', exphbs());
+app.set('view engine', 'handlebars');
+app.set('views', __dirname + '/views');
 
-app.get('/', (req, res) => {
-    res.send('Prueba');
-  });
-  
-
-  app.listen(PORT, () => {
-    console.log(`Servidor escuchando en el puerto ${PORT}`);
-  });
 
 app.use(bodyParser.json());
 
 
+let products = [];
+
+
+app.get('/', (req, res) => {
+  res.render('home', { products });
+});
+
+
+app.get('/realtimeproducts', (req, res) => {
+  res.render('realTimeProducts', { products });
+});
 
 
 const productsRouter = express.Router();
 app.use('/api/products', productsRouter);
 
 
-let products = [];
-
-
 productsRouter.get('/', (req, res) => {
   res.json(products);
 });
+
 
 productsRouter.get('/:pid', (req, res) => {
   const product = products.find(p => p.id === req.params.pid);
@@ -43,12 +53,13 @@ productsRouter.get('/:pid', (req, res) => {
 
 productsRouter.post('/', (req, res) => {
   const newProduct = {
-    id: generateId(), 
+    id: generateId(),
     ...req.body,
-    status: true 
+    status: true
   };
 
   products.push(newProduct);
+  io.emit('updateProducts', products); 
   res.status(201).json(newProduct);
 });
 
@@ -59,8 +70,9 @@ productsRouter.put('/:pid', (req, res) => {
     products[index] = {
       ...products[index],
       ...req.body,
-      id: req.params.pid 
+      id: req.params.pid
     };
+    io.emit('updateProducts', products); 
     res.json(products[index]);
   } else {
     res.status(404).json({ error: 'Producto no encontrado' });
@@ -70,6 +82,7 @@ productsRouter.put('/:pid', (req, res) => {
 
 productsRouter.delete('/:pid', (req, res) => {
   products = products.filter(p => p.id !== req.params.pid);
+  io.emit('updateProducts', products); 
   res.status(204).end();
 });
 
@@ -77,12 +90,13 @@ productsRouter.delete('/:pid', (req, res) => {
 const cartsRouter = express.Router();
 app.use('/api/carts', cartsRouter);
 
+
 let carts = [];
 
 
 cartsRouter.post('/', (req, res) => {
   const newCart = {
-    id: generateId(), 
+    id: generateId(),
     products: []
   };
 
@@ -100,7 +114,6 @@ cartsRouter.get('/:cid', (req, res) => {
   }
 });
 
-
 cartsRouter.post('/:cid/product/:pid', (req, res) => {
   const cart = carts.find(c => c.id === req.params.cid);
   if (cart) {
@@ -109,6 +122,7 @@ cartsRouter.post('/:cid/product/:pid', (req, res) => {
 
       cart.products[productIndex].quantity++;
     } else {
+
       cart.products.push({
         id: req.params.pid,
         quantity: 1
@@ -125,6 +139,7 @@ function generateId() {
   return Math.random().toString(36).substr(2, 9);
 }
 
-app.listen(PORT, () => {
+
+server.listen(PORT, () => {
   console.log(`Servidor escuchando en el puerto ${PORT}`);
 });
