@@ -7,8 +7,24 @@ const bodyParser = require('body-parser');
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
-
 const PORT = 8080;
+
+const mongoose = require('mongoose');
+
+const MONGO_URI = 'tu_uri_de_conexion_mongodb'; // Reemplaza con tu URI de conexión
+
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+const db = mongoose.connection;
+
+db.on('error', console.error.bind(console, 'Error de conexión a MongoDB:'));
+db.once('open', () => {
+  console.log('Conexión exitosa a MongoDB');
+});
+
 
 
 app.engine('handlebars', exphbs());
