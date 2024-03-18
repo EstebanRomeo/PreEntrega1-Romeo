@@ -10,14 +10,13 @@ const io = socketIO(server);
 const PORT = 8080;
 
 const mongoose = require('mongoose');
+const Product = require('./dao/models/productModel'); // Importar el modelo de Producto
 
-const MONGO_URI = 'tu_uri_de_conexion_mongodb'; // Reemplaza con tu URI de conexión
+const MONGO_URI = 'mongodb+srv://estebannicolasromeo:esteban28romeo@cluster0.fo3dz6j.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'; // Reemplaza con tu URI de conexión
 
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
-
+mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('Conexión exitosa a MongoDB'))
+  .catch(err => console.error('Error de conexión a MongoDB:', err));
 const db = mongoose.connection;
 
 db.on('error', console.error.bind(console, 'Error de conexión a MongoDB:'));
@@ -25,135 +24,115 @@ db.once('open', () => {
   console.log('Conexión exitosa a MongoDB');
 });
 
-
-
 app.engine('handlebars', exphbs());
 app.set('view engine', 'handlebars');
 app.set('views', __dirname + '/views');
 
-
 app.use(bodyParser.json());
 
+function paginate(array, page_size, page_number) {
+  return array.slice((page_number - 1) * page_size, page_number * page_size);
+}
 
-let products = [];
-
-
-app.get('/', (req, res) => {
-  res.render('home', { products });
+app.get('/', async (req, res) => {
+  try {
+    const products = await Product.find();
+    res.render('home', { products });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-
-app.get('/realtimeproducts', (req, res) => {
-  res.render('realTimeProducts', { products });
+app.get('/realtimeproducts', async (req, res) => {
+  try {
+    const products = await Product.find();
+    res.render('realTimeProducts', { products });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
-
 
 const productsRouter = express.Router();
 app.use('/api/products', productsRouter);
 
+productsRouter.get('/', async (req, res) => {
+  try {
+    const { limit = 10, page = 1, sort, query } = req.query;
+    const skip = (page - 1) * limit;
+    const filter = query ? { category: query } : {};
+    const sortOption = sort ? { price: sort === 'asc' ? 1 : -1 } : {};
+    const products = await Product.find(filter)
+      .sort(sortOption)
+      .limit(parseInt(limit))
+      .skip(skip);
+    const totalProducts = await Product.countDocuments(filter);
+    const totalPages = Math.ceil(totalProducts / limit);
+    const nextPage = page < totalPages ? parseInt(page) + 1 : null;
+    const prevPage = page > 1 ? parseInt(page) - 1 : null;
+    const hasNextPage = nextPage !== null;
+    const hasPrevPage = prevPage !== null;
+    const prevLink = hasPrevPage ? `/api/products?limit=${limit}&page=${prevPage}` : null;
+    const nextLink = hasNextPage ? `/api/products?limit=${limit}&page=${nextPage}` : null;
 
-productsRouter.get('/', (req, res) => {
-  res.json(products);
-});
-
-
-productsRouter.get('/:pid', (req, res) => {
-  const product = products.find(p => p.id === req.params.pid);
-  if (product) {
-    res.json(product);
-  } else {
-    res.status(404).json({ error: 'Producto no encontrado' });
+    res.json({
+      status: 'success',
+      payload: products,
+      totalPages,
+      prevPage,
+      nextPage,
+      page: parseInt(page),
+      hasPrevPage,
+      hasNextPage,
+      prevLink,
+      nextLink,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
 
-productsRouter.post('/', (req, res) => {
-  const newProduct = {
-    id: generateId(),
-    ...req.body,
-    status: true
-  };
-
-  products.push(newProduct);
-  io.emit('updateProducts', products); 
-  res.status(201).json(newProduct);
-});
-
-
-productsRouter.put('/:pid', (req, res) => {
-  const index = products.findIndex(p => p.id === req.params.pid);
-  if (index !== -1) {
-    products[index] = {
-      ...products[index],
+productsRouter.post('/', async (req, res) => {
+  try {
+    const newProduct = new Product({
       ...req.body,
-      id: req.params.pid
-    };
-    io.emit('updateProducts', products); 
-    res.json(products[index]);
-  } else {
-    res.status(404).json({ error: 'Producto no encontrado' });
+      status: true,
+    });
+    await newProduct.save();
+    io.emit('updateProducts', newProduct);
+    res.status(201).json(newProduct);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
-
-productsRouter.delete('/:pid', (req, res) => {
-  products = products.filter(p => p.id !== req.params.pid);
-  io.emit('updateProducts', products); 
-  res.status(204).end();
-});
-
-
-const cartsRouter = express.Router();
-app.use('/api/carts', cartsRouter);
-
-
-let carts = [];
-
-
-cartsRouter.post('/', (req, res) => {
-  const newCart = {
-    id: generateId(),
-    products: []
-  };
-
-  carts.push(newCart);
-  res.status(201).json(newCart);
-});
-
-
-cartsRouter.get('/:cid', (req, res) => {
-  const cart = carts.find(c => c.id === req.params.cid);
-  if (cart) {
-    res.json(cart.products);
-  } else {
-    res.status(404).json({ error: 'Carrito no encontrado' });
-  }
-});
-
-cartsRouter.post('/:cid/product/:pid', (req, res) => {
-  const cart = carts.find(c => c.id === req.params.cid);
-  if (cart) {
-    const productIndex = cart.products.findIndex(p => p.id === req.params.pid);
-    if (productIndex !== -1) {
-
-      cart.products[productIndex].quantity++;
+productsRouter.put('/:pid', async (req, res) => {
+  try {
+    const updatedProduct = await Product.findByIdAndUpdate(req.params.pid, req.body, { new: true });
+    if (updatedProduct) {
+      io.emit('updateProducts', updatedProduct);
+      res.json(updatedProduct);
     } else {
-
-      cart.products.push({
-        id: req.params.pid,
-        quantity: 1
-      });
+      res.status(404).json({ error: 'Producto no encontrado' });
     }
-    res.status(200).json(cart);
-  } else {
-    res.status(404).json({ error: 'Carrito no encontrado' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
-
-function generateId() {
-  return Math.random().toString(36).substr(2, 9);
-}
+productsRouter.delete('/:pid', async (req, res) => {
+  try {
+    const deletedProduct = await Product.findByIdAndDelete(req.params.pid);
+    if (deletedProduct) {
+      io.emit('updateProducts', deletedProduct);
+      res.status(204).end();
+    } else {
+      res.status(404).json({ error: 'Producto no encontrado' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 
 server.listen(PORT, () => {
