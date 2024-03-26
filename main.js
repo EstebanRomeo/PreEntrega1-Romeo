@@ -12,7 +12,7 @@ const PORT = 8080;
 const mongoose = require('mongoose');
 const Product = require('./dao/models/productModel'); // Importar el modelo de Producto
 
-const MONGO_URI = 'mongodb+srv://estebannicolasromeo:esteban28romeo@cluster0.fo3dz6j.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'; // Reemplaza con tu URI de conexión
+const uri = 'mongodb+srv://estebannicolasromeo:esteban28romeo@cluster0.fo3dz6j.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'; // Reemplaza con tu URI de conexión
 
 mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('Conexión exitosa a MongoDB'))
