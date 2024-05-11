@@ -16,6 +16,8 @@ const PORT = 8080;
 const Product = require('./dao/models/productModel');
 const User = require('./dao/models/userModel');
 const Cart = require('./dao/models/cartModel');
+const Ticket = require('./dao/models/ticketModel');
+
 
 const mongooseURI = process.env.MONGO_URI;
 mongoose.connect(mongooseURI, { useNewUrlParser: true, useUnifiedTopology: true })
@@ -168,7 +170,6 @@ productsRouter.delete('/:pid', async (req, res) => {
   }
 });
 
-// Iniciar el servidor
 server.listen(PORT, () => {
   console.log(`Servidor escuchando en el puerto ${PORT}`);
 });
