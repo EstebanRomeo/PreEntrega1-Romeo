@@ -7,6 +7,9 @@ const session = require('express-session');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const mongoose = require('mongoose');
+const faker = require('faker');
+const { CustomError, errorDictionary, errorHandler } = require('./errorHandler');
+const { isAdmin, isUser } = require('./authMiddleware');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,7 +20,6 @@ const Product = require('./dao/models/productModel');
 const User = require('./dao/models/userModel');
 const Cart = require('./dao/models/cartModel');
 const Ticket = require('./dao/models/ticketModel');
-
 
 const mongooseURI = process.env.MONGO_URI;
 mongoose.connect(mongooseURI, { useNewUrlParser: true, useUnifiedTopology: true })
@@ -83,7 +85,12 @@ app.get('/logout', (req, res) => {
 
 app.get('/api/sessions/current', (req, res) => {
   if (req.isAuthenticated()) {
-    res.json(req.user);
+    const userDto = {
+      id: req.user.id,
+      email: req.user.email,
+      name: req.user.name,
+    };
+    res.json(userDto);
   } else {
     res.status(401).json({ error: 'No autenticado' });
   }
@@ -128,7 +135,7 @@ productsRouter.get('/', async (req, res) => {
   }
 });
 
-productsRouter.post('/', async (req, res) => {
+productsRouter.post('/', isAdmin, async (req, res) => {
   try {
     const newProduct = new Product({
       ...req.body,
@@ -142,34 +149,75 @@ productsRouter.post('/', async (req, res) => {
   }
 });
 
-productsRouter.put('/:pid', async (req, res) => {
+productsRouter.put('/:pid', isAdmin, async (req, res, next) => {
   try {
     const updatedProduct = await Product.findByIdAndUpdate(req.params.pid, req.body, { new: true });
     if (updatedProduct) {
       io.emit('updateProducts', updatedProduct);
       res.json(updatedProduct);
     } else {
-      res.status(404).json({ error: 'Producto no encontrado' });
+      throw new CustomError(404, 'Product not found', 'PRODUCT_NOT_FOUND');
     }
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
-productsRouter.delete('/:pid', async (req, res) => {
+productsRouter.delete('/:pid', isAdmin, async (req, res, next) => {
   try {
     const deletedProduct = await Product.findByIdAndDelete(req.params.pid);
     if (deletedProduct) {
       io.emit('updateProducts', deletedProduct);
       res.status(204).end();
     } else {
-      res.status(404).json({ error: 'Producto no encontrado' });
+      throw new CustomError(404, 'Product not found', 'PRODUCT_NOT_FOUND');
     }
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
+
+app.get('/mockingproducts', (req, res) => {
+  const products = [];
+  for (let i = 0; i < 100; i++) {
+    products.push({
+      _id: faker.datatype.uuid(),
+      name: faker.commerce.productName(),
+      description: faker.commerce.productDescription(),
+      price: faker.commerce.price(),
+      category: faker.commerce.department(),
+      status: true
+    });
+  }
+  res.json(products);
+});
+
+const cartsRouter = express.Router();
+app.use('/api/carts', cartsRouter);
+
+cartsRouter.post('/:cid/add', isUser, async (req, res, next) => {
+  try {
+    const { cid } = req.params;
+    const { productId, quantity } = req.body;
+    const cart = await Cart.findById(cid);
+    if (!cart) {
+      throw new CustomError(404, 'Cart not found', 'CART_NOT_FOUND');
+    }
+    const product = await Product.findById(productId);
+    if (!product) {
+      throw new CustomError(404, 'Product not found', 'PRODUCT_NOT_FOUND');
+    }
+    cart.products.push({ product: productId, quantity });
+    await cart.save();
+    res.status(200).json(cart);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.use(errorHandler);
 
 server.listen(PORT, () => {
   console.log(`Servidor escuchando en el puerto ${PORT}`);
 });
+
