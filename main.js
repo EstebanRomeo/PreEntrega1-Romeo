@@ -10,6 +10,7 @@ const mongoose = require('mongoose');
 const faker = require('faker');
 const { CustomError, errorDictionary, errorHandler } = require('./errorHandler');
 const { isAdmin, isUser } = require('./authMiddleware');
+const logger = require('./logger');
 
 const app = express();
 const server = http.createServer(app);
@@ -23,12 +24,12 @@ const Ticket = require('./dao/models/ticketModel');
 
 const mongooseURI = process.env.MONGO_URI;
 mongoose.connect(mongooseURI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log('Conexión exitosa a MongoDB'))
-  .catch(err => console.error('Error de conexión a MongoDB:', err));
+  .then(() => logger.info('Conexión exitosa a MongoDB'))
+  .catch(err => logger.error('Error de conexión a MongoDB:', err));
 const db = mongoose.connection;
-db.on('error', console.error.bind(console, 'Error de conexión a MongoDB:'));
+db.on('error', error => logger.error('Error de conexión a MongoDB:', error));
 db.once('open', () => {
-  console.log('Conexión exitosa a MongoDB');
+  logger.info('Conexión exitosa a MongoDB');
 });
 
 passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
@@ -131,6 +132,7 @@ productsRouter.get('/', async (req, res) => {
       nextLink,
     });
   } catch (error) {
+    logger.error('Error al obtener productos:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -145,6 +147,7 @@ productsRouter.post('/', isAdmin, async (req, res) => {
     io.emit('updateProducts', newProduct);
     res.status(201).json(newProduct);
   } catch (error) {
+    logger.error('Error al crear producto:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -217,7 +220,16 @@ cartsRouter.post('/:cid/add', isUser, async (req, res, next) => {
 
 app.use(errorHandler);
 
-server.listen(PORT, () => {
-  console.log(`Servidor escuchando en el puerto ${PORT}`);
+app.get('/loggerTest', (req, res) => {
+  logger.debug('This is a debug message');
+  logger.http('This is an http message');
+  logger.info('This is an info message');
+  logger.warning('This is a warning message');
+  logger.error('This is an error message');
+  logger.fatal('This is a fatal message');
+  res.send('Logs have been tested, check the console and errors.log file');
 });
 
+server.listen(PORT, () => {
+  logger.info(`Servidor escuchando en el puerto ${PORT}`);
+});
