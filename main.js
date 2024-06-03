@@ -9,8 +9,8 @@ const LocalStrategy = require('passport-local').Strategy;
 const mongoose = require('mongoose');
 const faker = require('faker');
 const { CustomError, errorDictionary, errorHandler } = require('./errorHandler');
-const { isAdmin, isUser } = require('./authMiddleware');
-const logger = require('./logger');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
@@ -24,12 +24,12 @@ const Ticket = require('./dao/models/ticketModel');
 
 const mongooseURI = process.env.MONGO_URI;
 mongoose.connect(mongooseURI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => logger.info('Conexión exitosa a MongoDB'))
-  .catch(err => logger.error('Error de conexión a MongoDB:', err));
+  .then(() => console.log('Conexión exitosa a MongoDB'))
+  .catch(err => console.error('Error de conexión a MongoDB:', err));
 const db = mongoose.connection;
-db.on('error', error => logger.error('Error de conexión a MongoDB:', error));
+db.on('error', console.error.bind(console, 'Error de conexión a MongoDB:'));
 db.once('open', () => {
-  logger.info('Conexión exitosa a MongoDB');
+  console.log('Conexión exitosa a MongoDB');
 });
 
 passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
@@ -132,27 +132,25 @@ productsRouter.get('/', async (req, res) => {
       nextLink,
     });
   } catch (error) {
-    logger.error('Error al obtener productos:', error);
     res.status(500).json({ error: error.message });
   }
 });
-
-productsRouter.post('/', isAdmin, async (req, res) => {
+productsRouter.post('/', async (req, res) => {
   try {
     const newProduct = new Product({
       ...req.body,
       status: true,
+      owner: req.user.email
     });
     await newProduct.save();
     io.emit('updateProducts', newProduct);
     res.status(201).json(newProduct);
   } catch (error) {
-    logger.error('Error al crear producto:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-productsRouter.put('/:pid', isAdmin, async (req, res, next) => {
+productsRouter.put('/:pid', async (req, res) => {
   try {
     const updatedProduct = await Product.findByIdAndUpdate(req.params.pid, req.body, { new: true });
     if (updatedProduct) {
@@ -166,7 +164,7 @@ productsRouter.put('/:pid', isAdmin, async (req, res, next) => {
   }
 });
 
-productsRouter.delete('/:pid', isAdmin, async (req, res, next) => {
+productsRouter.delete('/:pid', async (req, res, next) => {
   try {
     const deletedProduct = await Product.findByIdAndDelete(req.params.pid);
     if (deletedProduct) {
@@ -195,41 +193,165 @@ app.get('/mockingproducts', (req, res) => {
   res.json(products);
 });
 
-const cartsRouter = express.Router();
-app.use('/api/carts', cartsRouter);
+app.get('/loggerTest', (req, res) => {
+  console.log('Este es un mensaje de prueba.');
+  res.status(200).send('Logs de prueba realizados.');
+});
 
-cartsRouter.post('/:cid/add', isUser, async (req, res, next) => {
+
+app.post('/forgotpassword', async (req, res) => {
   try {
-    const { cid } = req.params;
-    const { productId, quantity } = req.body;
-    const cart = await Cart.findById(cid);
-    if (!cart) {
-      throw new CustomError(404, 'Cart not found', 'CART_NOT_FOUND');
+    const user = await User.findOne({ email: req.body.email });
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
     }
-    const product = await Product.findById(productId);
-    if (!product) {
-      throw new CustomError(404, 'Product not found', 'PRODUCT_NOT_FOUND');
-    }
-    cart.products.push({ product: productId, quantity });
-    await cart.save();
-    res.status(200).json(cart);
+    const token = crypto.randomBytes(20).toString('hex');
+    user.resetPasswordToken = token;
+    user.resetPasswordExpires = Date.now() + 3600000;
+    await user.save();
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: 'estebannicolasromeo@gmail.com',
+        pass: '1234'
+      }
+    });
+    const mailOptions = {
+      from: 'estebannicolasromeo@gmail.com',
+      to: user.email,
+      subject: 'Restablecimiento de contraseña',
+      text: `Para restablecer tu contraseña, haz clic en el siguiente enlace: \n\n
+        http://${req.headers.host}/resetpassword/${token}\n\n
+        El enlace expirará en 1 hora. Si no solicitaste esto, por favor ignora este correo y tu contraseña permanecerá sin cambios.`
+    };
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.log(error);
+      } else {
+        console.log('Email enviado: ' + info.response);
+      }
+    });
+    res.status(200).json({ message: 'Se ha enviado un correo con instrucciones para restablecer la contraseña.' });
   } catch (error) {
-    next(error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-app.use(errorHandler);
-
-app.get('/loggerTest', (req, res) => {
-  logger.debug('This is a debug message');
-  logger.http('This is an http message');
-  logger.info('This is an info message');
-  logger.warning('This is a warning message');
-  logger.error('This is an error message');
-  logger.fatal('This is a fatal message');
-  res.send('Logs have been tested, check the console and errors.log file');
+app.get('/resetpassword/:token', async (req, res) => {
+  try {
+    const user = await User.findOne({
+      resetPasswordToken: req.params.token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+    if (!user) {
+      return res.status(401).json({ message: 'El enlace para restablecer la contraseña es inválido o ha expirado.' });
+    }
+    res.render('resetpassword', { token: req.params.token });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
+app.post('/resetpassword/:token', async (req, res) => {
+  try {
+    const user = await User.findOne({
+      resetPasswordToken: req.params.token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+    if (!user) {
+      return res.status(401).json({ message: 'El enlace para restablecer la contraseña es inválido o ha expirado.' });
+    }
+    if (req.body.password === req.body.confirmPassword) {
+      return res.status(400).json({ message: 'No puedes restablecer la contraseña con la misma contraseña anterior.' });
+    }
+    user.password = req.body.password;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+    res.status(200).json({ message: 'Contraseña restablecida con éxito.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/users/premium/:uid', async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const { role } = req.body;
+    const user = await User.findByIdAndUpdate(uid, { role }, { new: true });
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+const winston = require('winston');
+
+const loggerDevelopment = winston.createLogger({
+  levels: {
+    debug: 0,
+    http: 1,
+    info: 2,
+    warning: 3,
+    error: 4,
+    fatal: 5
+  },
+  transports: [
+    new winston.transports.Console({
+      level: 'debug',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    }),
+    new winston.transports.File({ filename: 'error.log', level: 'error' })
+  ]
+});
+
+const loggerProduction = winston.createLogger({
+  levels: {
+    debug: 0,
+    http: 1,
+    info: 2,
+    warning: 3,
+    error: 4,
+    fatal: 5
+  },
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' })
+  ]
+});
+
+app.use((req, res, next) => {
+  const level = req.app.get('env') === 'development' ? 'debug' : 'info';
+  const msg = `${req.method} ${req.url}`;
+  req.log = req.app.get('env') === 'development' ? loggerDevelopment.log : loggerProduction.log;
+  req.log(level, msg);
+  next();
+});
+
+app.post('/login', (req, res) => {
+  const msg = `Login attempt for user: ${req.body.email}`;
+  req.log('info', msg);
+});
+
+app.post('/forgotpassword', (req, res) => {
+  const msg = `Password reset request for user: ${req.body.email}`;
+  req.log('info', msg)
+});
+
+const errorHandler = (err, req, res, next) => {
+  const { statusCode = 500, message } = err;
+  res.status(statusCode).json({ error: message });
+};
+
+app.use(errorHandler);
+
 server.listen(PORT, () => {
-  logger.info(`Servidor escuchando en el puerto ${PORT}`);
+  console.log(`Servidor escuchando en el puerto ${PORT}`);
 });
