@@ -11,6 +11,7 @@ const faker = require('faker');
 const { CustomError, errorDictionary, errorHandler } = require('./errorHandler');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const userRoutes = require('./routes/userRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -26,6 +27,7 @@ const mongooseURI = process.env.MONGO_URI;
 mongoose.connect(mongooseURI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('Conexión exitosa a MongoDB'))
   .catch(err => console.error('Error de conexión a MongoDB:', err));
+
 const db = mongoose.connection;
 db.on('error', console.error.bind(console, 'Error de conexión a MongoDB:'));
 db.once('open', () => {
@@ -135,6 +137,7 @@ productsRouter.get('/', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 productsRouter.post('/', async (req, res) => {
   try {
     const newProduct = new Product({
@@ -274,20 +277,7 @@ app.post('/resetpassword/:token', async (req, res) => {
   }
 });
 
-app.put('/api/users/premium/:uid', async (req, res) => {
-  try {
-    const { uid } = req.params;
-    const { role } = req.body;
-    const user = await User.findByIdAndUpdate(uid, { role }, { new: true });
-    if (!user) {
-      return res.status(404).json({ message: 'Usuario no encontrado' });
-    }
-    res.json(user);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
+app.use('/api/users', userRoutes);
 
 const winston = require('winston');
 
